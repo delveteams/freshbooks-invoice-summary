@@ -1,6 +1,13 @@
 # FreshBooks Invoice Details Processor
 
-Process FreshBooks invoice detail reports - sums line items by invoice and combines EUR/USD reports.
+Process FreshBooks "Invoice Details" reports - sums line items by invoice and combines EUR/USD reports.
+
+## Source Data
+
+Generate "Invoice Details" reports from FreshBooks:
+1. Go to Reports → Invoice Details 
+2. Filter by currency (EUR/USD) and export each as CSV
+3. Save as `invoice_details_EUR.csv` and `invoice_details_USD.csv`
 
 ## Usage
 
