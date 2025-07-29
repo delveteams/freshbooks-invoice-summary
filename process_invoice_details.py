@@ -6,7 +6,7 @@ Sums line items by invoice and combines EUR and USD reports.
 
 import pandas as pd
 import sys
-from decimal import Decimal, ROUND_HALF_UP
+import argparse
 
 def process_invoice_csv(file_path):
     """Process a single invoice details CSV file."""
@@ -17,7 +17,10 @@ def process_invoice_csv(file_path):
     # Convert Date Paid NaN to empty string for grouping consistency
     df['Date Paid'] = df['Date Paid'].fillna('')
     
-    # Group by invoice and sum the line totals
+    # Calculate total tax amount per line
+    df['Total Tax'] = df['Tax 1 Amount'].fillna(0) + df['Tax 2 Amount'].fillna(0)
+    
+    # Group by invoice and sum the amounts
     grouped = df.groupby([
         'Client Name', 
         'Invoice #', 
@@ -26,13 +29,21 @@ def process_invoice_csv(file_path):
         'Date Paid',
         'Currency'
     ]).agg({
+        'Line Subtotal': 'sum',
+        'Total Tax': 'sum',
         'Line Total': 'sum'
     }).reset_index()
     
-    # Rename column for clarity
-    grouped = grouped.rename(columns={'Line Total': 'Total Amount'})
+    # Rename columns for clarity
+    grouped = grouped.rename(columns={
+        'Line Subtotal': 'Amount Pre-Tax',
+        'Total Tax': 'Tax Amount',
+        'Line Total': 'Total Amount'
+    })
     
     # Round amounts to 2 decimal places
+    grouped['Amount Pre-Tax'] = grouped['Amount Pre-Tax'].round(2)
+    grouped['Tax Amount'] = grouped['Tax Amount'].round(2)
     grouped['Total Amount'] = grouped['Total Amount'].round(2)
     
     # Set payment status based on whether Date Paid is filled
@@ -47,19 +58,19 @@ def process_invoice_csv(file_path):
     
     return grouped
 
-def combine_reports(eur_file, usd_file, output_file):
-    """Combine EUR and USD invoice reports into a single file."""
+def combine_reports(input_files, output_file):
+    """Combine invoice reports from multiple files into a single file."""
     
-    print(f"Processing {eur_file}...")
-    eur_invoices = process_invoice_csv(eur_file)
-    print(f"Found {len(eur_invoices)} EUR invoices")
+    all_invoices = []
     
-    print(f"Processing {usd_file}...")
-    usd_invoices = process_invoice_csv(usd_file)
-    print(f"Found {len(usd_invoices)} USD invoices")
+    for file_path in input_files:
+        print(f"Processing {file_path}...")
+        invoices = process_invoice_csv(file_path)
+        print(f"Found {len(invoices)} invoices")
+        all_invoices.append(invoices)
     
-    # Combine both datasets
-    combined = pd.concat([eur_invoices, usd_invoices], ignore_index=True)
+    # Combine all datasets
+    combined = pd.concat(all_invoices, ignore_index=True) if all_invoices else pd.DataFrame()
     
     # Sort by invoice number (descending)
     # Ensure Invoice # is string type first
@@ -73,6 +84,8 @@ def combine_reports(eur_file, usd_file, output_file):
         'Client Name',
         'Invoice #', 
         'Date Issued',
+        'Amount Pre-Tax',
+        'Tax Amount',
         'Total Amount',
         'Currency',
         'Payment Status',
@@ -85,7 +98,9 @@ def combine_reports(eur_file, usd_file, output_file):
         'Client Name': 'client',
         'Invoice #': 'invoice_number',
         'Date Issued': 'issued_date',
-        'Total Amount': 'amount',
+        'Amount Pre-Tax': 'amount_pre_tax',
+        'Tax Amount': 'tax',
+        'Total Amount': 'total_amount',
         'Currency': 'currency',
         'Payment Status': 'payment_status',
         'Date Paid': 'date_paid'
@@ -105,9 +120,11 @@ def print_summary(df):
     
     # Group by currency
     currency_summary = df.groupby('currency').agg({
-        'amount': ['count', 'sum']
+        'amount_pre_tax': ['count', 'sum'],
+        'tax': 'sum',
+        'total_amount': 'sum'
     }).round(2)
-    currency_summary.columns = ['Count', 'Total Amount']
+    currency_summary.columns = ['Count', 'Pre-Tax Total', 'Tax Total', 'Grand Total']
     print(f"\nBy currency:")
     print(currency_summary)
     
@@ -117,25 +134,31 @@ def print_summary(df):
     print(status_summary)
     
     print(f"\nFirst 5 invoices:")
-    print(df.head()[['client', 'invoice_number', 'issued_date', 'amount', 'currency', 'payment_status']].to_string(index=False))
+    print(df.head()[['client', 'invoice_number', 'issued_date', 'amount_pre_tax', 'tax', 'total_amount', 'currency', 'payment_status']].to_string(index=False))
 
 def main():
     """Main function."""
     
-    eur_file = "invoice_details_EUR.csv"
-    usd_file = "invoice_details_USD.csv" 
-    output_file = "combined_invoices.csv"
+    parser = argparse.ArgumentParser(
+        description='Process FreshBooks invoice details CSV files and combine reports.'
+    )
     
-    # Allow command line arguments
-    if len(sys.argv) > 1:
-        eur_file = sys.argv[1]
-    if len(sys.argv) > 2:
-        usd_file = sys.argv[2]
-    if len(sys.argv) > 3:
-        output_file = sys.argv[3]
+    parser.add_argument(
+        'input_files',
+        nargs='+',
+        help='Input CSV files to process'
+    )
+    
+    parser.add_argument(
+        '-o', '--output',
+        default='combined_invoices.csv',
+        help='Output CSV file (default: combined_invoices.csv)'
+    )
+    
+    args = parser.parse_args()
     
     try:
-        combined_df = combine_reports(eur_file, usd_file, output_file)
+        combined_df = combine_reports(args.input_files, args.output)
         print_summary(combined_df)
         
     except FileNotFoundError as e:
